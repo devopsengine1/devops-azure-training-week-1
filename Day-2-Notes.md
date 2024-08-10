@@ -8,7 +8,6 @@ IaaS - Infrastructure as a Service
 
 https://userstorymap.io/epics-user-stories/#:~:text=Epics%20provide%20the%20overarching%20vision%20and%20objectives%2C%20offering,value%20and%20aligns%20with%20the%20end%20user%E2%80%99s%20needs
 
-create a file
 
 # 3. Difference between Git and GitHub :-
 
