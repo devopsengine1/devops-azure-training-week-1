@@ -1,0 +1,138 @@
+name: Terraform Plan and Apply
+
+
+# This is to trigger the pipeline
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: 
+      - main  # This tells me run this pipeline whenever there is a code commit to main
+  push:
+    branches:
+      - main  
+
+permissions:
+  checks: write
+  id-token: write
+  contents: write
+  actions: read
+  security-events: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  plan:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - dev    # we have setup the authentication against the dev environment
+    env:
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID:  ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      TF_WORKSPACE: ${{ secrets.TF_WORKSPACE }}
+      TF_CLOUD_ORGANIZATION: ${{ secrets.TF_ORG }}
+    environment: ${{ matrix.environment }}
+    steps:
+        - name: Checkout   # Checkout my code - Hey Runner (GitHub VM) please take a copy of my code from the branch
+          uses: actions/checkout@v3
+
+        - name: Azure Login   # Hey Runner login to Azure using the System Account
+          uses: azure/login@v1   # Reusable code , all you doing is giving some values to login as a system account
+          with:
+            client-id: ${{ secrets.ARM_CLIENT_ID }}
+            tenant-id: ${{ secrets.ARM_TENANT_ID }}
+            subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+   
+        - name: Setup Terraform
+          uses: hashicorp/setup-terraform@v2 # Reusbale code to install terraform
+          with:
+            terraform_version: '1.8.2'
+            cli_config_credentials_token: ${{ secrets.TFE_TOKEN }}
+
+        - name: Terraform Init # Run a terraform init to load the plugins
+          id: init
+          shell: bash
+          run:
+            terraform init -no-color
+          env:
+            TFE_TOKEN: ${{ secrets.TFE_TOKEN }}
+
+        - name: Terraform Validate # Validate
+          id: validate
+          shell: bash
+          run: | 
+            terraform validate -no-color
+
+        - name: Terraform Plan # So view what out code is going to do
+          id: plan
+          run: |
+            terraform plan --var-file="./environments/${{ matrix.environment }}.tfvars" \
+            -out="${{ matrix.environment }}.plan" \
+            -input=false \
+            -no-color \
+            -lock-timeout="600s"
+          continue-on-error: false
+
+        - name: Upload Artifact 
+          uses: actions/upload-artifact@v3.1.2
+          with:
+            name: ${{ matrix.environment }}-plan
+            path: ${{ matrix.environment }}.plan
+            retention-days: 30
+
+  apply:
+    if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs:
+      - plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - dev
+    env:
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID:  ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      TF_WORKSPACE: ${{ secrets.TF_WORKSPACE }}
+      TF_CLOUD_ORGANIZATION: ${{ secrets.TF_ORG }}
+    environment: ${{ matrix.environment }}
+    steps:
+        - uses: actions/checkout@v3
+
+        - uses: actions/download-artifact@v3
+          with:
+            name: ${{ matrix.environment }}-plan
+
+        - name: Azure Login
+          uses: azure/login@v1
+          with:
+            client-id: ${{ secrets.ARM_CLIENT_ID }}
+            tenant-id: ${{ secrets.ARM_TENANT_ID }}
+            subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+        - name: Setup Terraform
+          uses: hashicorp/setup-terraform@v2
+          with:
+            terraform_version: '1.8.2'
+            cli_config_credentials_token: ${{ secrets.TFE_TOKEN }}
+
+        - name: Terraform Init
+          shell: bash
+          run:
+            terraform init -no-color
+          env:
+            TFE_TOKEN: ${{ secrets.TFE_TOKEN }}
+            
+        - name: Terraform Apply # this is to do the terraform apply command like you did locally
+          id: apply
+          run: |
+            terraform apply -no-color \
+              -compact-warnings \
+              -auto-approve \
+              ${{ matrix.environment }}.plan
+          continue-on-error: false
